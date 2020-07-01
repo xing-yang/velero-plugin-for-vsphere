@@ -29,11 +29,13 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/backupdriver"
 	backupdriverClientset "github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/generated/clientset/versioned"
+	backupdriverscheme "github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/generated/clientset/versioned/scheme"
 	backupdriverInformers "github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/generated/informers/externalversions"
 	"github.com/vmware-tanzu/velero/pkg/util/logging"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/workqueue"
@@ -43,7 +45,7 @@ var (
 	master             = flag.String("master", "", "Master URL to build a client config from. Either this or kubeconfig needs to be set if the backupdriver is being run out of cluster.")
 	kubeConfig         = flag.String("kubeconfig", "", "Absolute path to the kubeconfig")
 	resyncPeriod       = flag.Duration("resync-period", time.Minute*10, "Resync period for cache")
-	workers            = flag.Int("workers", 10, "Concurrency to process multiple backup requests")
+	workers            = flag.Int("workers", 1, "Concurrency to process multiple backup requests")
 	retryIntervalStart = flag.Duration("retry-interval-start", time.Second, "Initial retry interval of failed backup request. It exponentially increases with each failure, up to retry-interval-max.")
 	retryIntervalMax   = flag.Duration("retry-interval-max", 5*time.Minute, "Maximum retry interval of failed backup request.")
 
@@ -104,14 +106,19 @@ func main() {
 	}
 
 	informerFactory := informers.NewSharedInformerFactory(kubeClient, *resyncPeriod)
-	backupdriverInformerFactory := backupdriverInformers.NewSharedInformerFactory(backupdriverClient, *resyncPeriod)
+	//backupdriverInformerFactory := backupdriverInformers.NewSharedInformerFactory(backupdriverClient, *resyncPeriod)
+	backupdriverInformerFactory := backupdriverInformers.NewSharedInformerFactoryWithOptions(backupdriverClient, *resyncPeriod, backupdriverInformers.WithNamespace("default"))
+
+	// Add Snapshot types to the default Kubernetes so events can be logged for them
+	backupdriverscheme.AddToScheme(scheme.Scheme)
 
 	// TODO: If CLUSTER_FLAVOR is GUEST_CLUSTER, set up svcKubeClient to communicate with the Supervisor Cluster
 	// If CLUSTER_FLAVOR is WORKLOAD, it is a Supervisor Cluster.
 	// By default we are in the Vanilla Cluster
-	rc := backupdriver.NewBackupDriverController("BackupDriverController", logger, kubeClient, *resyncPeriod, informerFactory, backupdriverInformerFactory, workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax))
+	rc := backupdriver.NewBackupDriverController("BackupDriverController", logger, kubeClient, *resyncPeriod, informerFactory, workqueue.NewItemExponentialFailureRateLimiter(*retryIntervalStart, *retryIntervalMax), backupdriverInformerFactory.Backupdriver().V1().Snapshots())
 	run := func(ctx context.Context) {
 		informerFactory.Start(wait.NeverStop)
+		backupdriverInformerFactory.Start(wait.NeverStop)
 		rc.Run(ctx, *workers)
 	}
 
