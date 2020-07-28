@@ -18,6 +18,7 @@ package backupdriver
 
 import (
 	"context"
+	//"fmt"
 	"time"
 
 	"k8s.io/client-go/rest"
@@ -28,10 +29,12 @@ import (
 	backupdriverinformers "github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/generated/informers/externalversions"
 	backupdriverlisters "github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/generated/listers/backupdriver/v1"
 	"github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/snapshotmgr"
+	v1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
@@ -46,6 +49,11 @@ type BackupDriverController interface {
 type backupDriverController struct {
 	name   string
 	logger logrus.FieldLogger
+
+	// KubeClient of the current cluster
+	kubeClient kubernetes.Interface
+	// Supervisor Cluster KubeClient from Guest Cluster
+	svcKubeClient kubernetes.Interface
 
 	// Supervisor Cluster KubeClient for Guest Cluster
 	svcKubeConfig *rest.Config
@@ -66,8 +74,8 @@ type backupDriverController struct {
 	pvcLister corelisters.PersistentVolumeClaimLister
 	// PVC Synced
 	pvcSynced cache.InformerSynced
-	// claim queue
-	claimQueue workqueue.RateLimitingInterface
+	// PVC queue
+	pvcQueue workqueue.RateLimitingInterface
 
 	// Supervisor Cluster PVC Lister
 	svcPVCLister corelisters.PersistentVolumeClaimLister
@@ -123,6 +131,8 @@ type backupDriverController struct {
 func NewBackupDriverController(
 	name string,
 	logger logrus.FieldLogger,
+	// Kubernetes Cluster KubeClient
+	kubeClient kubernetes.Interface,
 	backupdriverClient *backupdriverclientset.BackupdriverV1Client,
 	svcKubeConfig *rest.Config,
 	supervisorNamespace string,
@@ -151,8 +161,8 @@ func NewBackupDriverController(
 	// TODO: Use svcBackupdriverInformerFactor for svcCloneFromSnapshotInformer
 	svcCloneFromSnapshotInformer := backupdriverInformerFactory.Backupdriver().V1().CloneFromSnapshots()
 
-	claimQueue := workqueue.NewNamedRateLimitingQueue(
-		rateLimiter, "backup-driver-claim-queue")
+	pvcQueue := workqueue.NewNamedRateLimitingQueue(
+		rateLimiter, "backup-driver-pvc-queue")
 	snapshotQueue := workqueue.NewNamedRateLimitingQueue(
 		rateLimiter, "backup-driver-snapshot-queue")
 	cloneFromSnapshotQueue := workqueue.NewNamedRateLimitingQueue(
@@ -164,13 +174,14 @@ func NewBackupDriverController(
 		name:                           name,
 		logger:                         logger.WithField("controller", name),
 		svcKubeConfig:                  svcKubeConfig,
+		kubeClient:                     kubeClient,
 		backupdriverClient:             backupdriverClient,
 		snapManager:                    snapManager,
 		pvLister:                       pvInformer.Lister(),
 		pvSynced:                       pvInformer.Informer().HasSynced,
 		pvcLister:                      pvcInformer.Lister(),
 		pvcSynced:                      pvcInformer.Informer().HasSynced,
-		claimQueue:                     claimQueue,
+		pvcQueue:                     pvcQueue,
 		svcPVCLister:                   svcPVCInformer.Lister(),
 		svcPVCSynced:                   svcPVCInformer.Informer().HasSynced,
 		supervisorNamespace:            supervisorNamespace,
@@ -193,11 +204,14 @@ func NewBackupDriverController(
 		svcBackupRepositoryClaimSynced: svcBackupRepositoryClaimInformer.Informer().HasSynced,
 	}
 
-	pvcInformer.Informer().AddEventHandlerWithResyncPeriod(cache.ResourceEventHandlerFuncs{
-		//AddFunc:    rc.addPVC,
-		//UpdateFunc: rc.updatePVC,
-		//DeleteFunc: rc.deletePVC,
-	}, resyncPeriod)
+	pvcInformer.Informer().AddEventHandlerWithResyncPeriod(
+		cache.ResourceEventHandlerFuncs{
+			AddFunc:    func(obj interface{}) { ctrl.enqueuePVC(obj) },
+			UpdateFunc: func(oldObj, newObj interface{}) { ctrl.enqueuePVC(newObj) },
+			//DeleteFunc: func(obj interface{}) { ctrl.delPVC(obj) },
+		},
+		resyncPeriod,
+	)
 
 	svcPVCInformer.Informer().AddEventHandlerWithResyncPeriod(cache.ResourceEventHandlerFuncs{
 		//AddFunc:    rc.svcAddPVC,
@@ -213,8 +227,8 @@ func NewBackupDriverController(
 
 	snapshotInformer.Informer().AddEventHandlerWithResyncPeriod(
 		cache.ResourceEventHandlerFuncs{
-			AddFunc:    func(obj interface{}) { ctrl.enqueueSnapshot(obj) },
-			UpdateFunc: func(_, obj interface{}) { ctrl.enqueueSnapshot(obj) },
+			AddFunc: func(obj interface{}) { ctrl.enqueueSnapshot(obj) },
+			//UpdateFunc: func(oldObj, newObj interface{}) { ctrl.enqueueSnapshot(newObj) },
 			DeleteFunc: func(obj interface{}) { ctrl.delSnapshot(obj) },
 		},
 		resyncPeriod,
@@ -226,11 +240,14 @@ func NewBackupDriverController(
 		//DeleteFunc: rc.svcDeleteSnapshot,
 	}, resyncPeriod)
 
-	cloneFromSnapshotInformer.Informer().AddEventHandlerWithResyncPeriod(cache.ResourceEventHandlerFuncs{
-		//AddFunc:    rc.addCloneFromSnapshot,
-		//UpdateFunc: rc.updateCloneFromSnapshot,
-		//DeleteFunc: rc.deleteCloneFromSnapshot,
-	}, resyncPeriod)
+	cloneFromSnapshotInformer.Informer().AddEventHandlerWithResyncPeriod(
+		cache.ResourceEventHandlerFuncs{
+			AddFunc: func(obj interface{}) { ctrl.enqueueCloneFromSnapshot(obj) },
+			//UpdateFunc: func(oldObj, newObj interface{}) { ctrl.enqueueCloneFromSnapshot(newObj) },
+			//DeleteFunc: func(obj interface{}) { ctrl.delCloneFromSnapshot(obj) },
+		},
+		resyncPeriod,
+	)
 
 	svcCloneFromSnapshotInformer.Informer().AddEventHandlerWithResyncPeriod(cache.ResourceEventHandlerFuncs{
 		//AddFunc:    rc.svcAddCloneFromSnapshot,
@@ -279,7 +296,7 @@ func (ctrl *backupDriverController) getKey(obj interface{}) (string, error) {
 // Run starts the controller.
 func (ctrl *backupDriverController) Run(
 	ctx context.Context, workers int) {
-	defer ctrl.claimQueue.ShutDown()
+	defer ctrl.pvcQueue.ShutDown()
 	defer ctrl.snapshotQueue.ShutDown()
 	defer ctrl.cloneFromSnapshotQueue.ShutDown()
 
@@ -296,12 +313,12 @@ func (ctrl *backupDriverController) Run(
 	ctrl.logger.Infof("Caches are synced")
 
 	for i := 0; i < workers; i++ {
-		//go wait.Until(ctrl.pvcWorker, 0, stopCh)
+		go wait.Until(ctrl.pvcWorker, 0, stopCh)
 		//go wait.Until(ctrl.pvWorker, 0, stopCh)
 		//go wait.Until(ctrl.svcPvcWorker, 0, stopCh)
 		go wait.Until(ctrl.snapshotWorker, 0, stopCh)
 		//go wait.Until(ctrl.svcSnapshotWorker, 0, stopCh)
-		//go wait.Until(ctrl.cloneFromSnapshotWorker, 0, stopCh)
+		go wait.Until(ctrl.cloneFromSnapshotWorker, 0, stopCh)
 		//go wait.Until(ctrl.svcCloneFromSnapshotWorker, 0, stopCh)
 		go wait.Until(ctrl.backupRepositoryClaimWorker, 0, stopCh)
 	}
@@ -337,8 +354,7 @@ func (ctrl *backupDriverController) syncSnapshotByKey(key string) error {
 		return err
 	}
 
-	// Always retrieve up-to-date snapshot CR from API server
-	snapshot, err := ctrl.backupdriverClient.Snapshots(namespace).Get(name, metav1.GetOptions{})
+	snapshot, err := ctrl.snapshotLister.Snapshots(namespace).Get(name)
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			ctrl.logger.Infof("Snapshot %s/%s is deleted, no need to process it", namespace, name)
@@ -346,11 +362,6 @@ func (ctrl *backupDriverController) syncSnapshotByKey(key string) error {
 		}
 		ctrl.logger.Errorf("Get Snapshot %s/%s failed: %v", namespace, name, err)
 		return err
-	}
-
-	if snapshot.Status.Phase != backupdriverapi.SnapshotPhaseNew {
-		ctrl.logger.Debugf("Skipping snapshot, %v, which is not in New phase. Current phase: %v", key, snapshot.Status.Phase)
-		return nil
 	}
 
 	if snapshot.ObjectMeta.DeletionTimestamp == nil {
@@ -369,10 +380,10 @@ func (ctrl *backupDriverController) enqueueSnapshot(obj interface{}) {
 	if unknown, ok := obj.(cache.DeletedFinalStateUnknown); ok && unknown.Obj != nil {
 		obj = unknown.Obj
 	}
-	if brc, ok := obj.(*backupdriverapi.Snapshot); ok {
-		objName, err := cache.DeletionHandlingMetaNamespaceKeyFunc(brc)
+	if snapshot, ok := obj.(*backupdriverapi.Snapshot); ok {
+		objName, err := cache.DeletionHandlingMetaNamespaceKeyFunc(snapshot)
 		if err != nil {
-			ctrl.logger.Errorf("failed to get key from object: %v, %v", err, brc)
+			ctrl.logger.Errorf("failed to get key from object: %v, %v", err, snapshot)
 			return
 		}
 		ctrl.logger.Infof("enqueueSnapshot: enqueued %q for sync", objName)
@@ -404,7 +415,97 @@ func (ctrl *backupDriverController) delSnapshot(obj interface{}) {
 	ctrl.snapshotQueue.Done(key)
 }
 
+// pvcWorker is the main worker for PVC request.
 func (ctrl *backupDriverController) pvcWorker() {
+	ctrl.logger.Infof("pvcWorker: Enter pvcWorker")
+
+	key, quit := ctrl.pvcQueue.Get()
+	if quit {
+		return
+	}
+	defer ctrl.pvcQueue.Done(key)
+
+	if err := ctrl.syncPVCByKey(key.(string)); err != nil {
+		// Put PVC back to the queue so that we can retry later.
+		ctrl.pvcQueue.AddRateLimited(key)
+	} else {
+		ctrl.pvcQueue.Forget(key)
+	}
+}
+
+// syncPVCByKey processes one Snapshot CRD
+func (ctrl *backupDriverController) syncPVCByKey(key string) error {
+	/*ctrl.logger.Infof("syncPVCByKey: Started PVC processing %s", key)
+
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		ctrl.logger.Errorf("Split meta namespace key of PVC %s failed: %v", key, err)
+		return err
+	}
+
+	pvc, err := ctrl.pvcLister.PersistentVolumeClaims(namespace).Get(name)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			ctrl.logger.Infof("PVC %s/%s is deleted, no need to process it", namespace, name)
+			return nil
+		}
+		ctrl.logger.Errorf("Get PVC %s/%s failed: %v", namespace, name, err)
+		return err
+	}
+
+	if pvc.ObjectMeta.DeletionTimestamp == nil {
+		ctrl.logger.Infof("syncPVCByKey: calling CreatePVC %s/%s", pvc.Namespace, pvc.Name)
+		// TODO: Wait for PV to be created and bound with PVC
+		// Then pass PV.Spec.VolumeHandle to CreatePVC so that
+		// data can be downloaded and copied to PV
+		pvName := pvc.Spec.VolumeName
+		pv, err := ctrl.pvLister.Get(pvName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to retrieve PV %s from the API server: %q", pvName, err)
+		}
+		// Verify binding between PV/PVC is valid
+		bound := ctrl.isVolumeBoundToClaim(pv, pvc)
+		if bound {
+			return ctrl.createVolumeFromSnapshot(pvc)
+		}
+	}*/
+
+	return nil
+}
+
+// isVolumeBoundToClaim returns true, if given volume is pre-bound or bound
+// to specific claim. Both claim.Name and claim.Namespace must be equal.
+// If claim.UID is present in volume.Spec.ClaimRef, it must be equal too.
+func (ctrl *backupDriverController) isVolumeBoundToClaim(volume *v1.PersistentVolume, claim *v1.PersistentVolumeClaim) bool {
+	if volume.Spec.ClaimRef == nil {
+		return false
+	}
+	if claim.Name != volume.Spec.ClaimRef.Name || claim.Namespace != volume.Spec.ClaimRef.Namespace {
+		return false
+	}
+	if volume.Spec.ClaimRef.UID != "" && claim.UID != volume.Spec.ClaimRef.UID {
+		return false
+	}
+	return true
+}
+
+// enqueuePVC adds PVC given work queue.
+func (ctrl *backupDriverController) enqueuePVC(obj interface{}) {
+	ctrl.logger.Infof("enqueuePVC: %+v", obj)
+
+	// Beware of "xxx deleted" events
+	if unknown, ok := obj.(cache.DeletedFinalStateUnknown); ok && unknown.Obj != nil {
+		obj = unknown.Obj
+	}
+	if brc, ok := obj.(*v1.PersistentVolumeClaim); ok {
+		objName, err := cache.DeletionHandlingMetaNamespaceKeyFunc(brc)
+		if err != nil {
+			ctrl.logger.Errorf("failed to get key from object: %v, %v", err, brc)
+			return
+		}
+		ctrl.logger.Infof("enqueuePVC: enqueued %q for sync", objName)
+		ctrl.pvcQueue.Add(objName)
+	}
 }
 
 func (ctrl *backupDriverController) svcPvcWorker() {
@@ -416,7 +517,139 @@ func (ctrl *backupDriverController) pvWorker() {
 func (ctrl *backupDriverController) svcSnapshotWorker() {
 }
 
+// cloneFromSnapshotWorker is the main worker for restore request.
 func (ctrl *backupDriverController) cloneFromSnapshotWorker() {
+	ctrl.logger.Infof("cloneFromSnapshotWorker: Enter cloneFromSnapshotWorker")
+
+	key, quit := ctrl.cloneFromSnapshotQueue.Get()
+	if quit {
+		return
+	}
+	defer ctrl.cloneFromSnapshotQueue.Done(key)
+
+	if err := ctrl.syncCloneFromSnapshotByKey(key.(string)); err != nil {
+		// Put cloneFromSnapshot back to the queue so that we can retry later.
+		ctrl.cloneFromSnapshotQueue.AddRateLimited(key)
+	} else {
+		ctrl.cloneFromSnapshotQueue.Forget(key)
+	}
+}
+
+// syncCloneFromSnapshotByKey processes one CloneFromSnapshot CRD
+func (ctrl *backupDriverController) syncCloneFromSnapshotByKey(key string) error {
+	ctrl.logger.Infof("syncCloneFromSnapshotByKey: Started CloneFromSnapshot processing %s", key)
+
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		ctrl.logger.Errorf("Split meta namespace key of CloneFromSnapshot %s failed: %v", key, err)
+		return err
+	}
+
+	cloneFromSnapshot, err := ctrl.cloneFromSnapshotLister.CloneFromSnapshots(namespace).Get(name)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			ctrl.logger.Infof("CloneFromSnapshot %s/%s is deleted, no need to process it", namespace, name)
+			return nil
+		}
+		ctrl.logger.Errorf("Get CloneFromSnapshot %s/%s failed: %v", namespace, name, err)
+		return err
+	}
+
+	if cloneFromSnapshot.ObjectMeta.DeletionTimestamp == nil {
+		ctrl.logger.Infof("syncCloneFromSnapshotByKey: calling CloneFromSnapshot %s/%s", cloneFromSnapshot.Namespace, cloneFromSnapshot.Name)
+		//volumeID
+		_, err := ctrl.createVolumeFromSnapshot(cloneFromSnapshot)
+		if err != nil {
+			ctrl.logger.Errorf("createVolumeFromSnapshot %s/%s failed: %v", namespace, name, err)
+			return err
+		}
+		/*
+			//return ctrl.cloneFromSnapshot(CloneFromSnapshot)
+			// TODO: create PVC dynamically
+			// Construct a PVC
+			// TODO: Question? Find to find the original PVC with StorageClass
+			// Is it inside the CloneFromSnapshotSpec.Metadata?
+
+			// TODO: Check if Guest Cluster.  If so, create CloneFromSnapshot in Supervisor
+
+			if ctrl.svcKubeConfig != nil {
+				// This indicates we are in the Guest Cluster
+				// Create CloneFromSnapshot in Supervisor
+			}
+			/*type PersistentVolumeClaimSpec struct {
+			  // Contains the types of access modes required
+			  // +optional
+			  AccessModes []PersistentVolumeAccessMode
+			  // A label query over volumes to consider for binding. This selector is
+			  // ignored when VolumeName is set
+			  // +optional
+			  Selector *metav1.LabelSelector
+			  // Resources represents the minimum resources required
+			  // +optional
+			  Resources ResourceRequirements
+			  // VolumeName is the binding reference to the PersistentVolume backing this
+			  // claim. When set to non-empty value Selector is not evaluated
+			  // +optional
+			  VolumeName string
+			  // Name of the StorageClass required by the claim.
+			  // More info: https://kubernetes.io/docs/concepts/storage/persistent-volumes/#class-1
+			  // +optional
+			  StorageClassName *string
+			  // volumeMode defines what type of volume is required by the claim.
+			  // Value of Filesystem is implied when not included in claim spec.
+			  // +optional
+			  VolumeMode *PersistentVolumeMode*/
+		// Metadata []byte `json:"metadata,omitempty"`
+
+		/*pvcName := cloneFromSnapshot.Metadata["Name"]
+		accessModes := cloneFromSnapshot.Metadata["AccessModes"]
+		resources := cloneFromSnapshot.Metadata["Resources"]
+		storageClassName := cloneFromSnapshot.Metadata["StorageClassName"]
+		volumeMode := cloneFromSnapshot.Metadata["VolumeMode"]
+		pvc := &v1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: cloneFromSnapshot.Namespace,
+				Name:      pvcName,
+			},
+			Spec: v1.PersistentVolumeClaimSpec{
+				AccessModes:      accessModes,
+				Resources:        resources,
+				StorageClassName: storageClassName,
+				VolumeMode:       volumeMode,
+			},
+		}
+
+		if newPVC, err = kubeClient.CoreV1().PersistentVolumeClaims(cloneFromSnapshot.Namespace).Create(pvc); err == nil || apierrs.IsAlreadyExists(err) {
+			// Save succeeded.
+			if err != nil {
+				klog.V(3).Infof("PVC %s/%s already exists, reusing", pvc.Namespace, pvc.Name)
+				err = nil
+			} else {
+				klog.V(3).Infof("PVC %s/%s saved", pvc.Namespace, pvc.Name)
+			}
+		}*/
+	}
+
+	return nil
+}
+
+// enqueueCloneFromSnapshot adds CloneFromSnapshotto given work queue.
+func (ctrl *backupDriverController) enqueueCloneFromSnapshot(obj interface{}) {
+	ctrl.logger.Infof("enqueueCloneFromSnapshot: %+v", obj)
+
+	// Beware of "xxx deleted" events
+	if unknown, ok := obj.(cache.DeletedFinalStateUnknown); ok && unknown.Obj != nil {
+		obj = unknown.Obj
+	}
+	if cloneFromSnapshot, ok := obj.(*backupdriverapi.CloneFromSnapshot); ok {
+		objName, err := cache.DeletionHandlingMetaNamespaceKeyFunc(cloneFromSnapshot)
+		if err != nil {
+			ctrl.logger.Errorf("failed to get key from object: %v, %v", err, cloneFromSnapshot)
+			return
+		}
+		ctrl.logger.Infof("enqueueCloneFromSnapshot: enqueued %q for sync", objName)
+		ctrl.cloneFromSnapshotQueue.Add(objName)
+	}
 }
 
 func (ctrl *backupDriverController) svcCloneFromSnapshotWorker() {
