@@ -525,17 +525,17 @@ func (this *SnapshotManager) CreateVolumeFromSnapshot(peID astrolabe.ProtectedEn
 
 func (this *SnapshotManager) CreateVolumeFromSnapshotWithMetadata(peID astrolabe.ProtectedEntityID, metadata []byte, snapshotID string, backupRepositoryName string) (astrolabe.ProtectedEntityID, *v1api.Download, error) {
 	this.Infof("CreateVolumeFromSnapshotWithMetadata: Start creating restore for %s", peID.String())
-	// TODO(xyang): Will enable following code when astrolabe.Overwrite is ready
-	//config, err := rest.InClusterConfig()
-	//if err != nil {
-	//	this.WithError(err).Errorf("Failed to get k8s inClusterConfig")
-	//	return
-	//}
-	//pluginClient, err := plugin_clientset.NewForConfig(config)
-	//if err != nil {
-	//	this.WithError(err).Errorf("Failed to get k8s clientset with the given config: %v", config)
-	//	return
-	//}
+
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		this.WithError(err).Errorf("Failed to get k8s inClusterConfig")
+		return astrolabe.ProtectedEntityID{}, nil, err
+	}
+	pluginClient, err := plugin_clientset.NewForConfig(config)
+	if err != nil {
+		this.WithError(err).Errorf("Failed to get k8s clientset with the given config: %v", config)
+		return astrolabe.ProtectedEntityID{}, nil, err
+	}
 
 	veleroNs, exist := os.LookupEnv("VELERO_NAMESPACE")
 	if !exist {
@@ -551,7 +551,7 @@ func (this *SnapshotManager) CreateVolumeFromSnapshotWithMetadata(peID astrolabe
 
 	this.Infof("Ready to call astrolabe CreateFromMetadata API.")
 	// CreateFromMetadata returns a PVCPE
-	pe, err := pvcPETM.CreateFromMetadata(ctx, metadata)
+	pe, err = pvcPETM.CreateFromMetadata(ctx, metadata)
 	if err != nil {
 		this.WithError(err).Errorf("Error creating volume from metadata")
 		return astrolabe.ProtectedEntityID{}, nil, err
@@ -570,11 +570,10 @@ func (this *SnapshotManager) CreateVolumeFromSnapshotWithMetadata(peID astrolabe
 	download := builder.ForDownload(veleroNs, downloadRecordName).
 		RestoreTimestamp(time.Now()).NextRetryTimestamp(time.Now()).SnapshotID(snapshotID).ProtectedEntityID(pe.GetID().String()).BackupRepositoryName(backupRepositoryName).Phase(v1api.DownloadPhaseNew).Result()
 	this.Infof("Download CR by builder: %+v", download)
-	// TODO(xyang): Will enable following code when astrolabe.Overwrite is ready
-	/*_, err = pluginClient.VeleropluginV1().Downloads(veleroNs).Create(download)
+	_, err = pluginClient.VeleropluginV1().Downloads(veleroNs).Create(download)
 	if err != nil {
 		this.WithError(err).Errorf("CreateVolumeFromSnapshot: Failed to create Download CR for %s", peID.String())
-		return
+		return astrolabe.ProtectedEntityID{}, nil, err
 	}
 
 	lastPollLogTime := time.Now()
@@ -604,11 +603,10 @@ func (this *SnapshotManager) CreateVolumeFromSnapshotWithMetadata(peID astrolabe
 		}
 	})
 	if err != nil {
-		return
+		return astrolabe.ProtectedEntityID{}, nil, err
 	}
-	updatedID, err = astrolabe.NewProtectedEntityIDFromString(download.Status.VolumeID)
-	this.Infof("CreateVolumeFromSnapshotWithMetadata completed with updated ID: %s", updatedID)
-	*/
+	//updatedID, err := astrolabe.NewProtectedEntityIDFromString(download.Status.VolumeID)
+	this.Infof("CreateVolumeFromSnapshotWithMetadata completed with PE ID: %s", peID)
 
-	return pe.GetID(), download, err
+	return peID, download, nil
 }

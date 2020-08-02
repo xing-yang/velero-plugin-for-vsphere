@@ -236,7 +236,22 @@ func (c *downloadController) processDownload(req *pluginv1api.Download) error {
 		return errors.New(errMsg)
 	}
 
-	returnPeId, err := c.dataMover.CopyFromRepo(peID)
+	options := astrolabe.AllocateNewObject
+	// If ProtectedEntityID is provided, we are overwriting an existing FCD
+	var targetPEID astrolabe.ProtectedEntityID
+	if req.Spec.ProtectedEntityID != "" {
+		// peID is source pe id
+		log.Infof("ProtectedEntity ID from Download CR is %s", req.Spec.ProtectedEntityID)
+		options = astrolabe.UpdateExistingObject
+		targetPEID, err = astrolabe.NewProtectedEntityIDFromString(req.Spec.ProtectedEntityID)
+		if err != nil {
+			errMsg := fmt.Sprintf("failed to create target PEID from string %s: %v", req.Spec.ProtectedEntityID, errors.WithStack(err))
+			log.Error(errMsg)
+			return errors.New(errMsg)
+		}
+	}
+	log.Infof("Copy options: %v, source PEID: %s, target PEID: %s", options, peID.String(), targetPEID.String())
+	returnPeId, err := c.dataMover.CopyFromRepo(peID, targetPEID, options)
 	if err != nil {
 		errMsg := fmt.Sprintf("Failed to download snapshot, %v, from durable object storage. %v", peID.String(), errors.WithStack(err))
 		_, err = c.patchDownloadByStatus(req, pluginv1api.DownLoadPhaseRetry, errMsg)
@@ -247,7 +262,7 @@ func (c *downloadController) processDownload(req *pluginv1api.Download) error {
 		return errors.New(errMsg)
 	}
 
-	log.Debugf("A new volume %s was just created from the call to CopyFromRepo", returnPeId.String())
+	log.Infof("A new volume %s was just created from the call to CopyFromRepo", returnPeId.String())
 
 	// update status to Completed with path & snapshot id
 	req, err = c.patchDownloadByStatus(req, pluginv1api.DownloadPhaseCompleted, returnPeId.String())
