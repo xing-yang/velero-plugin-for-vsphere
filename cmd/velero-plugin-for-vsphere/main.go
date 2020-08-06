@@ -17,27 +17,27 @@
 package main
 
 import (
-	"os"
-	"strings"
+	//"os"
+	//"strings"
 
 	"github.com/sirupsen/logrus"
-	"github.com/spf13/pflag"
+	//"github.com/spf13/pflag"
 	plugins_pkg "github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/plugin"
-	"github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/utils"
-	"github.com/vmware-tanzu/velero/pkg/features"
+	//"github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/utils"
+	//"github.com/vmware-tanzu/velero/pkg/features"
 	veleroplugin "github.com/vmware-tanzu/velero/pkg/plugin/framework"
 )
 
 func main() {
-	enableFeatureFlagForVSpherePlugins()
+	//enableFeatureFlagForVSpherePlugins()
 	veleroPluginServer := veleroplugin.NewServer()
-	if features.IsEnabled(utils.VSphereItemActionPluginFlag) {
-		veleroPluginServer = veleroPluginServer.
-			RegisterBackupItemAction("velero.io/vsphere-pvc-backupper", newPVCBackupItemAction).
-			RegisterRestoreItemAction("velero.io/vsphere-pvc-restorer", newPVCRestoreItemAction)
-	} else {
-		veleroPluginServer = veleroPluginServer.RegisterVolumeSnapshotter("velero.io/vsphere", newVolumeSnapshotterPlugin)
-	}
+	//if features.IsEnabled(utils.VSphereItemActionPluginFlag) {
+	veleroPluginServer = veleroPluginServer.
+		RegisterBackupItemAction("velero.io/vsphere-pvc-backupper", newPVCBackupItemAction).
+		RegisterRestoreItemAction("velero.io/vsphere-pvc-restorer", newPVCRestoreItemAction)
+	//} else {
+	//	veleroPluginServer = veleroPluginServer.RegisterVolumeSnapshotter("velero.io/vsphere", newVolumeSnapshotterPlugin)
+	//}
 	veleroPluginServer.Serve()
 }
 
@@ -53,7 +53,7 @@ func newPVCRestoreItemAction(logger logrus.FieldLogger) (interface{}, error) {
 	return &plugins_pkg.NewPVCRestoreItemAction{Log: logger}, nil
 }
 
-func enableFeatureFlagForVSpherePlugins() {
+/*func enableFeatureFlagForVSpherePlugins() {
 	var featureString string
 	flags := pflag.CommandLine
 	flags.StringVar(&featureString, "features", featureString, "list of feature flags for this plugin")
@@ -62,4 +62,4 @@ func enableFeatureFlagForVSpherePlugins() {
 
 	featureFlags := strings.Split(featureString, ",")
 	features.Enable(featureFlags...)
-}
+}*/

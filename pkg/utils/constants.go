@@ -133,10 +133,10 @@ const (
 )
 
 // feature flog constants
-const (
-	// VSphereItemActionPluginFlag is the feature flag string that defines whether or not vSphere ItemActionPlugin features are being used.
-	VSphereItemActionPluginFlag = "EnableVSphereItemActionPlugin"
-)
+//const (
+//	// VSphereItemActionPluginFlag is the feature flag string that defines whether or not vSphere ItemActionPlugin features are being used.
+//	VSphereItemActionPluginFlag = "EnableVSphereItemActionPlugin"
+//)
 
 // Keys for Para Virtual Cluster access for Guest Cluster
 const (

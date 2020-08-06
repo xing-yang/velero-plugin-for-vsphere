@@ -30,7 +30,7 @@ import (
 	"github.com/vmware-tanzu/velero/pkg/client"
 	"github.com/vmware-tanzu/velero/pkg/cmd/util/flag"
 	"github.com/vmware-tanzu/velero/pkg/cmd/util/output"
-	"github.com/vmware-tanzu/velero/pkg/features"
+	//"github.com/vmware-tanzu/velero/pkg/features"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -120,12 +120,12 @@ func NewCommand(f client.Factory) *cobra.Command {
 
 func (o *InstallOptions) Run(c *cobra.Command, f client.Factory) error {
 	// Check if ItemActionPlugin feature is enabled.
-	featureFlags := strings.Split(o.Features, ",")
-	features.Enable(featureFlags...)
-	if !features.IsEnabled(utils.VSphereItemActionPluginFlag) {
-		fmt.Printf("Feature %s is not enabled. Skipping backup-driver installation", utils.VSphereItemActionPluginFlag)
-		return nil
-	}
+	//featureFlags := strings.Split(o.Features, ",")
+	//features.Enable(featureFlags...)
+	//if !features.IsEnabled(utils.VSphereItemActionPluginFlag) {
+	//	fmt.Printf("Feature %s is not enabled. Skipping backup-driver installation", utils.VSphereItemActionPluginFlag)
+	//	return nil
+	//}
 
 	// Check local mode
 	o.LocalMode = utils.GetBool(install.DefaultBackupDriverImageLocalMode, false)
