@@ -157,6 +157,13 @@ func (this *DataMover) copyFromRepo(peID astrolabe.ProtectedEntityID, targetPEID
 		this.s3PETM = repoPETM
 	}
 	ctx := context.Background()
+	// Get source PE
+
+	// TODO(xyang): peID is currently like this: pvc:test-ns/test-pvc:9d9db5c5-2164-459d-b21c-fb370fa6a709. This throws exception:
+	// time="2020-08-06T13:32:55Z" level=error msg="Failed to get ProtectedEntity from remote PEID"
+	// Remote PEID="pvc:test-ns/test-pvc:9d9db5c5-2164-459d-b21c-fb370fa6a709" error="GetObject failed for bucket xyang-velero, key plugins/vsphere-astrolabe-repo/ivd/peinfo/pvc:test-ns/test-pvc:9d9db5c5-2164-459d-b21c-fb370fa6a709: NoSuchKey: The specified key does not exist.\n\tstatus code: 404, request id: 1628B1162F47C0AE, host id: " error.file="/go/pkg/mod/github.com/vmware-tanzu/astrolabe@v0.1.2-0.20200804195701-8d372cf85f17/pkg/s3repository/repository_protected_entity_type_manager.go:176" error.function="github.com/vmware-tanzu/astrolabe/pkg/s3repository.(*ProtectedEntityTypeManager).GetProtectedEntity" logSource="/go/src/github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/dataMover/data_mover.go:162"
+
+	// It should be like this - "ivd:2fff92c8-80a6-4fea-ac0c-71598452ecc4:9d9db5c5-2164-459d-b21c-fb370fa6a709" where 2fff92c8-80a6-4fea-ac0c-71598452ecc4 is original FCD ID and 9d9db5c5-2164-459d-b21c-fb370fa6a709 is original FCD's snapshot ID
 	pe, err := this.s3PETM.GetProtectedEntity(ctx, peID)
 	if err != nil {
 		log.WithError(err).Errorf("Failed to get ProtectedEntity from remote PEID")
@@ -167,6 +174,7 @@ func (this *DataMover) copyFromRepo(peID astrolabe.ProtectedEntityID, targetPEID
 	if options == astrolabe.UpdateExistingObject {
 		// Overwrite target pe with source pe
 		log.Infof("Overwriting the target PE %s with the snapshot from remote repository source PE %s.", targetPEID.String(), peID.String())
+		// TODO(xyang): targetPEID should be ivd:<target FCD ID>
 		targetPE, err := this.ivdPETM.GetProtectedEntity(ctx, targetPEID)
 		if err != nil {
 			log.WithError(err).Errorf("Failed to get ProtectedEntity from target PEID %s", targetPEID.String())

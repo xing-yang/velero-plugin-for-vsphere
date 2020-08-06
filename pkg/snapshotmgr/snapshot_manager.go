@@ -563,8 +563,16 @@ func (this *SnapshotManager) CreateVolumeFromSnapshotWithMetadata(peID astrolabe
 		return astrolabe.ProtectedEntityID{}, nil, err
 	}
 
-	this.Infof("CreateVolumeFromSnapshotWithMetadata: PE returned by CreateFromMetadata PE %+v", pe.GetID().String())
+	this.Infof("CreateVolumeFromSnapshotWithMetadata: PE returned by CreateFromMetadata PE %s, Snapshot ID %s", pe.GetID().String(), peID.GetSnapshotID().GetID())
 
+	// TODO(xyang):
+	// 1. Retrieve FCD ID from PE's PV. Currently peID is in this format:
+	//    pvc:<namespace><pvc name> which is pass to download CR
+	//    as ProtecteeEntityID.
+	//    ProtectedEntityID in Download CR should be ivd:<target FCD ID>
+	// 2. snapshotID is from cloneFromSnapshot.Spec.SnapshotID. It is
+	//    currently in this format: pvc:<namespace><pvc name>:<FCD snapshot ID>
+	//    It should be in this format: ivd:<original FCD ID>:<original FCD's snapshot ID>
 	uuid, _ := uuid.NewRandom()
 	downloadRecordName := "download-" + peID.GetSnapshotID().GetID() + "-" + uuid.String()
 	download := builder.ForDownload(veleroNs, downloadRecordName).
