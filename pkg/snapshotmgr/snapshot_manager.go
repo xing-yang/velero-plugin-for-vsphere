@@ -566,7 +566,7 @@ func (this *SnapshotManager) CreateVolumeFromSnapshotWithMetadata(peID astrolabe
 	this.Infof("CreateVolumeFromSnapshotWithMetadata: PE returned by CreateFromMetadata PE %+v", pe.GetID().String())
 
 	uuid, _ := uuid.NewRandom()
-	downloadRecordName := "download-" + "-" + snapshotID + "-" + uuid.String()
+	downloadRecordName := "download-" + peID.GetSnapshotID().GetID() + "-" + uuid.String()
 	download := builder.ForDownload(veleroNs, downloadRecordName).
 		RestoreTimestamp(time.Now()).NextRetryTimestamp(time.Now()).SnapshotID(snapshotID).ProtectedEntityID(pe.GetID().String()).BackupRepositoryName(backupRepositoryName).Phase(v1api.DownloadPhaseNew).Result()
 	this.Infof("Download CR by builder: %+v", download)
