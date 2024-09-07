@@ -311,6 +311,89 @@ func createCnsVolumeWithClusterConfig(ctx context.Context, vcConfig *vsphere.Vir
 	return volumeId, nil
 }
 
+// Xing
+/*func queryCnsVolumeWithClusterConfig(ctx context.Context, vcConfig *vsphere.VirtualCenterConfig, config *rest.Config, client *govmomi.Client, cnsManager *vsphere.CnsManager, md metadata, logger logrus.FieldLogger) (string, error) {
+	logger.Infof("createCnsVolumeWithClusterConfig called with args, config params and metadata: %v", md)
+
+	reservedLabelsMap, err := fillInClusterSpecificParams(vcConfig, logger)
+	if err != nil {
+		logger.WithError(err).Error("Failed at calling fillInClusterSpecificParams")
+		return "", err
+	}
+
+	// Preparing for the VolumeCreateSpec for the volume provisioning
+	logger.Info("Preparing for the VolumeCreateSpec for the volume provisioning")
+	dsList, err := findSharedDatastoresFromAllNodeVMs(ctx, client.Client, config, logger)
+	if err != nil {
+		logger.WithError(err).Error("Failed to find any datastore in the underlying vSphere")
+		return "", err
+	}
+
+	var metadataList []cnstypes.BaseCnsEntityMetadata
+	metadata := &cnstypes.CnsKubernetesEntityMetadata{
+		CnsEntityMetadata: cnstypes.CnsEntityMetadata{
+			EntityName: md.VirtualStorageObject.Config.Name,
+			Labels:     md.ExtendedMetadata,
+		},
+		EntityType: string(cnstypes.CnsKubernetesEntityTypePV),
+	}
+	metadataList = append(metadataList, cnstypes.BaseCnsEntityMetadata(metadata))
+
+	var cnsVolumeCreateSpecList []cnstypes.CnsVolumeCreateSpec
+	cnsVolumeCreateSpec := cnstypes.CnsVolumeCreateSpec{
+		Name:       md.VirtualStorageObject.Config.Name,
+		VolumeType: string(cnstypes.CnsVolumeTypeBlock),
+		Datastores: dsList,
+		Metadata: cnstypes.CnsVolumeMetadata{
+			ContainerCluster: cnstypes.CnsContainerCluster{
+				ClusterType: string(cnstypes.CnsClusterTypeKubernetes), // hard coded for the moment
+				ClusterId:   reservedLabelsMap["cns.containerCluster.clusterId"],
+				VSphereUser: reservedLabelsMap["cns.containerCluster.vSphereUser"],
+			},
+			EntityMetadata: metadataList,
+		},
+		BackingObjectDetails: &cnstypes.CnsBlockBackingDetails{
+			CnsBackingObjectDetails: cnstypes.CnsBackingObjectDetails{
+				CapacityInMb: md.VirtualStorageObject.Config.CapacityInMB,
+			},
+		},
+	}
+
+	cnsVolumeCreateSpecList = append(cnsVolumeCreateSpecList, cnsVolumeCreateSpec)
+	logger.Infof("Provisioning volume using the spec: %v", cnsVolumeCreateSpec)
+
+	// provision volume using CNS API
+	createTask, err := cnsManager.CreateVolume(ctx, cnsVolumeCreateSpecList)
+	if err != nil {
+		logger.WithError(err).Errorf("Failed to create volume. Error: %+v", err)
+		return "", err
+	}
+	createTaskInfo, err := cns.GetTaskInfo(ctx, createTask)
+	if err != nil {
+		logger.WithError(err).Errorf("Failed to create volume. Error: %+v", err)
+		return "", err
+	}
+	createTaskResult, err := cns.GetTaskResult(ctx, createTaskInfo)
+	if err != nil {
+		logger.WithError(err).Errorf("Failed to create volume. Error: %+v", err)
+		return "", err
+	}
+	if createTaskResult == nil {
+		err := errors.New("Empty create task results")
+		logger.Error(err.Error())
+		return "", err
+	}
+	createVolumeOperationRes := createTaskResult.GetCnsVolumeOperationResult()
+	if createVolumeOperationRes.Fault != nil {
+		logger.Errorf("Failed to create volume: fault=%+v", createVolumeOperationRes.Fault)
+		return "", errors.New(createVolumeOperationRes.Fault.LocalizedMessage)
+	}
+
+	volumeId := createVolumeOperationRes.VolumeId.Id
+	logger.Infof("CNS volume, %v, created", volumeId)
+	return volumeId, nil
+}*/
+
 func fillInClusterSpecificParams(vcConfig *vsphere.VirtualCenterConfig, logger logrus.FieldLogger) (map[string]string, error) {
 	logger.Infof("Retrieved cluster id, %v, and vSphere user, %v", vcConfig.ClusterId, vcConfig.ClusterId)
 
@@ -406,4 +489,24 @@ func CreateCnsVolumeInCluster(ctx context.Context, vcConfig *vsphere.VirtualCent
 	}
 
 	return NewIDFromString(volumeId), nil
+}
+
+func QueryCnsVolumeInCluster(ctx context.Context, vcConfig *vsphere.VirtualCenterConfig, client *govmomi.Client, cnsManager *vsphere.CnsManager, md metadata, logger logrus.FieldLogger) (vim25types.ID, error) {
+        logger.Infof("CreateCnsVolumeInCluster called with args, metadata: %v", md)
+
+        // Get the cluster configuration for node, datastore information.
+        logger.Debug("Retrieving cluster configuration")
+        config, err := rest.InClusterConfig()
+        if err != nil {
+                logger.WithError(err).Error("Failed to get k8s inClusterConfig")
+                return vim25types.ID{}, err
+        }
+
+        volumeId, err := createCnsVolumeWithClusterConfig(ctx, vcConfig, config, client, cnsManager, md, logger)
+        if err != nil {
+                logger.WithError(err).Error("Failed to call createCnsVolumeWithClusterConfig")
+                return vim25types.ID{}, err
+        }
+
+        return NewIDFromString(volumeId), nil
 }

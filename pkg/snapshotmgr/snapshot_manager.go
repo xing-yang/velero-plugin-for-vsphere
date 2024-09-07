@@ -373,6 +373,22 @@ func (this *SnapshotManager) UploadSnapshot(uploadPE astrolabe.ProtectedEntity, 
 	return retUpload, err
 }
 
+// Xing
+func (this *SnapshotManager) RegisterDisk(peID astrolabe.ProtectedEntityID,
+        path string, name string) (string, error) {
+        this.WithField("peID", peID.String()).Info("XY: SnapshotManager.RegisterDisk was called.")
+
+        pe, err := this.Pem.GetProtectedEntity(context.TODO(), peID)
+        if err != nil {
+                this.Errorf("Failed to GetProtectedEntity for %s", peID.String())
+                return "", err
+        }
+
+        return pe.RegisterDisk(context.TODO(), path, name)
+
+	//ivd/ivd_protected_entity.go:func (this IVDProtectedEntity) RegisterDisk(ctx context.Context, path string, name string) (string, error)
+}
+
 func (this *SnapshotManager) DeleteSnapshotWithBackupRepository(peID astrolabe.ProtectedEntityID,
 	backupRepository string, deleteSnapshotCRName string) error {
 	this.WithField("peID", peID.String()).Info("SnapshotManager.DeleteSnapshotWithBackupRepository was called.")
@@ -745,19 +761,28 @@ func (this *SnapshotManager) CreateVolumeFromSnapshot(sourcePEID astrolabe.Prote
 }
 
 func (this *SnapshotManager) CreateVolumeFromSnapshotWithMetadata(peID astrolabe.ProtectedEntityID, metadata []byte,
-	snapshotIDStr string, backupRepositoryName string, cloneFromSnapshotNamespace string, cloneFromSnapshotName string) (astrolabe.ProtectedEntityID, error) {
-	this.Infof("CreateVolumeFromSnapshotWithMetadata: Start creating restore for %s, snapshot ID %s, backupRepositoryName %s, cloneFromSnapshot %s/%s", peID.String(), snapshotIDStr, backupRepositoryName, cloneFromSnapshotNamespace, cloneFromSnapshotName)
+	snapshotIDStr string, backupRepositoryName string, cloneFromSnapshotNamespace string, cloneFromSnapshotName string, fcdId string) (astrolabe.ProtectedEntityID, error) {
+	this.Infof("XY: CreateVolumeFromSnapshotWithMetadata: Start creating restore for %s, snapshot ID %s, backupRepositoryName %s, cloneFromSnapshot %s/%s, fcdId %s", peID.String(), snapshotIDStr, backupRepositoryName, cloneFromSnapshotNamespace, cloneFromSnapshotName, fcdId)
 	snapshotID, err := astrolabe.NewProtectedEntityIDFromString(snapshotIDStr)
 	if err != nil {
 		this.WithError(err).Errorf("Error creating volume from metadata")
 		return astrolabe.ProtectedEntityID{}, errors.Wrap(err, "Error creating volume from metadata")
 	}
-	this.Infof("CreateVolumeFromSnapshotWithMetadata: snapshot ID %s", snapshotID.String())
+	this.Infof("XY: CreateVolumeFromSnapshotWithMetadata: snapshot ID %s", snapshotID.String())
+
+	ctx := context.Background()
+        pe, err := this.Pem.GetProtectedEntity(ctx, peID)
+        if err != nil {
+                this.WithError(err).Errorf("Failed to GetProtectedEntity for %s", peID.String())
+                return astrolabe.ProtectedEntityID{}, err
+        }
 
 	var snapshotRepo astrolabe.ProtectedEntityTypeManager
-	ctx := context.Background()
+	//ctx := context.Background()
 	if this.clusterFlavor != constants.TkgGuest {
-		this.Infof("CreateVolumeFromSnapshotWithMetadata: not a TKG Guest Cluster")
+		this.Infof("XY: CreateVolumeFromSnapshotWithMetadata: not a TKG Guest Cluster")
+		//pe.RegisterDisk(ctx, "", "")
+
 		if backupRepositoryName != "" && backupRepositoryName != constants.WithoutBackupRepository {
 			backupRepository, err := backuprepository.GetBackupRepositoryFromBackupRepositoryName(backupRepositoryName)
 			if err != nil {
@@ -773,13 +798,13 @@ func (this *SnapshotManager) CreateVolumeFromSnapshotWithMetadata(peID astrolabe
 			peTM := this.Pem.GetProtectedEntityTypeManager(peID.GetPeType())
 			pvcPETM := peTM.(*astrolabe_pvc.PVCProtectedEntityTypeManager)
 
-			this.Infof("Ready to call astrolabe CreateFromMetadata API: snapshot ID %s", snapshotID.String())
-			pe, err := pvcPETM.CreateFromMetadata(ctx, metadata, snapshotID, snapshotRepo, cloneFromSnapshotNamespace, cloneFromSnapshotName, backupRepositoryName)
+			this.Infof("XY: Ready to call astrolabe CreateFromMetadata API: snapshot ID %s fcdId %s", snapshotID.String(), fcdId)
+			pe, err := pvcPETM.CreateFromMetadata(ctx, metadata, snapshotID, snapshotRepo, cloneFromSnapshotNamespace, cloneFromSnapshotName, backupRepositoryName, fcdId)
 			if err != nil {
 				this.WithError(err).Errorf("Error creating volume from metadata")
 				return astrolabe.ProtectedEntityID{}, errors.Wrap(err, "Error creating volume from metadata")
 			}
-			this.Infof("CreateVolumeFromSnapshotWithMetadata: PE returned by CreateFromMetadata: %s", pe.GetID().String())
+			this.Infof("XY: CreateVolumeFromSnapshotWithMetadata: PE returned by CreateFromMetadata: %s", pe.GetID().String())
 			return pe.GetID(), err
 		} else {
 			errMsg := "BackupRepository unset during restore, local mode set during restore is unsupported."
@@ -793,7 +818,7 @@ func (this *SnapshotManager) CreateVolumeFromSnapshotWithMetadata(peID astrolabe
 	this.Infof("CreateVolumeFromSnapshotWithMetadata: TKG Guest Cluster")
 
 	this.Infof("Ready to call astrolabe CreateFromMetadata API: snapshot ID %s", snapshotID.String())
-	pe, err := paravirtPETM.CreateFromMetadata(ctx, metadata, snapshotID, snapshotRepo, cloneFromSnapshotNamespace, cloneFromSnapshotName, backupRepositoryName)
+	pe, err = paravirtPETM.CreateFromMetadata(ctx, metadata, snapshotID, snapshotRepo, cloneFromSnapshotNamespace, cloneFromSnapshotName, backupRepositoryName)
 	if err != nil {
 		this.WithError(err).Errorf("Failed to CreateFromMetadata for PE %s", peID.String())
 		return astrolabe.ProtectedEntityID{}, errors.Wrap(err, "Error creating volume from metadata")

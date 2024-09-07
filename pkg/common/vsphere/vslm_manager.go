@@ -270,6 +270,67 @@ func (this *VslmManager) Delete(ctx context.Context, id vim.ID) (*vslm_vsom.Task
 	return deleteTask, nil
 }
 
+// Xing
+// RegisterDisk registers a virtual disk as a First Class Disk.
+// This method helps in registering VCP volumes as FCD using vslm endpoint
+// The method takes 2 parameters, path and name. Path refers to backingDiskURLPath
+// containing the vmdkPath and name is any given string for the FCD.
+// RegisterDisk API takes this name as optional parameter, so it need not be
+// a unique string or anything.
+func (this *VslmManager) RegisterDisk(ctx context.Context, path string, name string) (string, error) {
+        /*log := logger.GetLogger(ctx)
+        err := validateManager(ctx, m)
+        if err != nil {
+                log.Errorf("failed to validate volume manager with err: %+v", err)
+                return "", err
+        }
+        // Set up the VC connection.
+        err = m.virtualCenter.ConnectVslm(ctx)
+        if err != nil {
+                log.Errorf("ConnectVslm failed with err: %+v", err)
+                return "", err
+        }
+        globalObjectManager := vslm.NewGlobalObjectManager(m.virtualCenter.VslmClient)
+        vStorageObject, err := globalObjectManager.RegisterDisk(ctx, path, name)
+        if err != nil {
+		alreadyExists, objectID := vsphere.IsAlreadyExists(err)
+		if alreadyExists {
+			log.Infof("vStorageObject: %q, already exists and registered as FCD, returning success", objectID)
+			return objectID, nil
+		}
+                log.Errorf("failed to register virtual disk %q as first class disk with err: %v", path, err)
+                return "", err
+        }
+        return vStorageObject.Config.Id.Id, nil*/
+
+	log := this.logger
+        invokeCount := 0
+        //var registerTask *vslm_vsom.Task
+        cachedVsom := this.vsom
+        var err error
+	var vStorageObject *vim.VStorageObject
+	        log.Infof("XY: Trying to register disk for path: %s name: %s", path, name)
+        for invokeCount <= DefaultAuthErrorRetryCount {
+                invokeCount++
+                vStorageObject, err = cachedVsom.RegisterDisk(ctx, path, name)
+                if err != nil {
+			alreadyExists, objectID := IsAlreadyExists(err)
+			if alreadyExists {
+				log.Infof("XY: Replication Test: vStorageObject: %q, already exists and registered as FCD, returning success", objectID)
+				return objectID, nil
+			}
+                        cachedVsom, err = this.processError(invokeCount, err)
+                        if err != nil {
+                                return "", err
+                        }
+                } else {
+                        break
+                }
+        }
+	log.Infof("XY: vStorageObject registered as FCD %s, returning success", vStorageObject.Config.Id.Id)
+        return vStorageObject.Config.Id.Id, nil
+}
+
 func (this *VslmManager) processError(invokeCount int, apiError error) (*vslm_vsom.GlobalObjectManager, error) {
 	log := this.logger
 	var refreshedVsom *vslm_vsom.GlobalObjectManager

@@ -173,6 +173,10 @@ func (this ParaVirtProtectedEntity) Overwrite(ctx context.Context, sourcePE astr
 	panic("implement me")
 }
 
+func (this ParaVirtProtectedEntity) RegisterDisk(ctx context.Context, path string, name string) (string, error) {
+        panic("implement me")
+}
+
 func (this ParaVirtProtectedEntity) getVolumeHandleFromPV() (string, error) {
 	pv, err := this.pvpetm.gcKubeClientSet.CoreV1().PersistentVolumes().Get(context.TODO(), this.id.GetID(), metav1.GetOptions{})
 	if err != nil {

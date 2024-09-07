@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"net/url"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/vmware-tanzu/astrolabe/pkg/astrolabe"
@@ -400,6 +401,36 @@ func (this IVDProtectedEntity) ListSnapshots(ctx context.Context) ([]astrolabe.P
 	this.logger.Infof("Retrieved %d snapshots for pe-id: %s, snapshots= %v", len(peSnapshotIDs), this.GetID().String(), peSnapshotIDs)
 	return peSnapshotIDs, nil
 }
+
+func (this IVDProtectedEntity) RegisterDisk(ctx context.Context, path string, name string) (string, error) {
+        this.logger.Infof("XY: RegisterDisk called on path %v, name %v", path, name)
+        err := this.ipetm.CheckVcenterConnections(ctx)
+        if err != nil {
+                return "", err
+        }
+	// This following path works in RegisterDisk MOB:
+	//path = "https://10.193.26.62/folder/680bbd66-781a-731c-725c-0050568b0d69/4292e47c9bf04b37996127ce00329c1a.vmdk?dcPath=VSAN-DC&amp;dsName=vsanDatastore"
+	name = "test_replication"
+
+	// https://<vc_ip>/folder/<vm_vmdk_path>?dcPath=<datacenter-path>&dsName=<datastoreName>
+	host := "10.193.26.62"
+	vmdkPath := "680bbd66-781a-731c-725c-0050568b0d69/4292e47c9bf04b37996127ce00329c1a.vmdk"
+	datacenter := "VSAN-DC"
+	datastoreName := "vsanDatastore"
+	backingDiskURLPath := "https://" + host + "/folder/" +
+	vmdkPath + "?dcPath=" + url.PathEscape(datacenter) + "&dsName=" + url.PathEscape(datastoreName)
+	path = backingDiskURLPath
+
+	this.logger.Infof("XY: calling vslmManager.RegisterDisk for path: %v name: %v", path, name)
+        FcdId, err := this.ipetm.vslmManager.RegisterDisk(ctx, path, name)
+        if err != nil {
+                this.logger.Errorf("XY: failed to register virtual disk %q as first class disk with err: %v", path, err)
+                return "", errors.Wrap(err, "RegisterDisk failed")
+        }
+        this.logger.Infof("RegisterDisk for path: %v name: %v, FCD uuid= %v", path, name, FcdId)
+        return FcdId, nil
+}
+
 func (this IVDProtectedEntity) DeleteSnapshot(ctx context.Context, snapshotToDelete astrolabe.ProtectedEntitySnapshotID, params map[string]map[string]interface{}) (bool, error) {
 	this.logger.Infof("DeleteSnapshot called on IVD Protected Entity, %v, with input arg, %v", this.GetID().String(), snapshotToDelete.String())
 	retryCount := 0

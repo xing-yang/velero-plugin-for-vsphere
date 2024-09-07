@@ -109,3 +109,18 @@ func CheckForVcAuthFaults(err error, log logrus.FieldLogger) bool {
 	}
 	return false
 }
+
+// IsAlreadyExists checks if err is the AlreadyExists fault.
+// If the error is AlreadyExists fault, the method returns true along with the
+// name of the managed object. Otherwise, returns false.
+func IsAlreadyExists(err error) (bool, string) {
+        isAlreadyExistsError := false
+        objectName := ""
+        if soap.IsSoapFault(err) {
+                _, isAlreadyExistsError = soap.ToSoapFault(err).VimFault().(vim.AlreadyExists)
+                if isAlreadyExistsError {
+                        objectName = soap.ToSoapFault(err).VimFault().(vim.AlreadyExists).Name
+                }
+        }
+        return isAlreadyExistsError, objectName
+}

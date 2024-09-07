@@ -827,8 +827,6 @@ github.com/valyala/bytebufferpool v1.0.0/go.mod h1:6bBcMArwyJ5K/AmCkWv1jt77kVWyC
 github.com/valyala/fasttemplate v1.2.1 h1:TVEnxayobAdVkhQfrfes2IzOB6o+z4roRkPF52WA1u4=
 github.com/valyala/fasttemplate v1.2.1/go.mod h1:KHLXt3tVN2HBp8eijSv/kGJopbvo7S+qRAEEKiv+SiQ=
 github.com/vektah/gqlparser v1.1.2/go.mod h1:1ycwN7Ij5njmMkPPAOaRFY4rET2Enx7IkVv3vaXspKw=
-github.com/vmware-tanzu/astrolabe v0.6.0 h1:fHKJ9X/0E8n4AeF8uu/Iz41rpKy7bxN8fp09Bpm+IKo=
-github.com/vmware-tanzu/astrolabe v0.6.0/go.mod h1:io5y7Gfas//vKMCPd3czxw8PYfHu77QUpd2fHWYXcD4=
 github.com/vmware-tanzu/velero v1.10.2 h1:Vxao3R4wjmw6iR2W7ihdreKpqjuMA7Kjxne7ByjUQfQ=
 github.com/vmware-tanzu/velero v1.10.2/go.mod h1:FZJMmwYCeiE3lu/SBL/pP1bRGdju6zK4/vCE4s3A3Wo=
 github.com/vmware/govmomi v0.22.2-0.20200329013745-f2eef8fc745f h1:6LIYlihC1/LDUhZ7zYVp1WOEY5owzsvogiaHBqvBzPU=

@@ -23,6 +23,7 @@ import (
 	"github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/constants"
 	"io"
 	"io/ioutil"
+	"strings"
 	"time"
 
 	"github.com/vmware-tanzu/astrolabe/pkg/astrolabe"
@@ -257,9 +258,10 @@ func (ctrl *backupDriverController) deleteSnapshot(deleteSnapshot *backupdrivera
 func (ctrl *backupDriverController) cloneFromSnapshot(cloneFromSnapshot *backupdriverapi.CloneFromSnapshot) error {
 	ctrl.logger.Infof("cloneFromSnapshot called with cloneFromSnapshot: %+v", cloneFromSnapshot)
 	ctx := context.Background()
-	var returnVolumeID, returnVolumeType string
+	// var returnVolumeID, returnVolumeType string
 	cloneFromSnapshotStatusFields := make(map[string]interface{})
-	var peId, returnPeId astrolabe.ProtectedEntityID
+	var peId astrolabe.ProtectedEntityID
+	//var returnPeId astrolabe.ProtectedEntityID
 	var err error
 
 	// Need to extract PVC info from metadata to clone from snapshot
@@ -304,12 +306,72 @@ func (ctrl *backupDriverController) cloneFromSnapshot(cloneFromSnapshot *backupd
 	}
 	ctrl.logger.Infof("cloneFromSnapshot: retrieved PVC %s/%s from metadata. %+v", pvc.Namespace, pvc.Name, pvc)
 
-	// cloneFromSnapshot.Spec.Kind should be "PersistentVolumeClaim" for now
-	peId = astrolabe.NewProtectedEntityIDWithNamespace(cloneFromSnapshot.Spec.Kind, pvc.Name, pvc.Namespace)
-	ctrl.logger.Infof("cloneFromSnapshot: Generated PE ID: %s", peId.String())
+	// Xing
+	annPVtoBackingDiskObjectId := "cns.vmware.com/pv-to-backingdiskobjectid-mapping"
+	//apiVersion: v1
+  	//kind: PersistentVolumeClaim
+  	//metadata:
+    	//	annotations:
+      	//		cns.vmware.com/pv-to-backingdiskobjectid-mapping: d0216bab-6c7a-40ce-a049-4732bb4b2dc1:740bbd66-f37f-6f5c-1ede-0050568b268b|190cd241-8012-4730-9d62-cbe689889c69|[vsanDatastore] 680bbd66-781a-731c-725c-0050568b0d69/4292e47c9bf04b37996127ce00329c1a.vmdk
+        //        // Format:
+        //        // https://<vc_ip>/folder/<vm_vmdk_path>?dcPath=<datacenter-path>&dsName=<datastoreName>
+        //        backingDiskURLPath := "https://" + host + "/folder/" +
+        //                vmdkPath + "?dcPath=" + url.PathEscape(datacenter) + "&dsName=" + url.PathEscape(datastoreName)
 
-	returnPeId, err = ctrl.snapManager.CreateVolumeFromSnapshotWithMetadata(peId, cloneFromSnapshot.Spec.Metadata,
-		cloneFromSnapshot.Spec.SnapshotID, cloneFromSnapshot.Spec.BackupRepository, cloneFromSnapshot.Namespace, cloneFromSnapshot.Name)
+	// cloneFromSnapshot.Spec.Kind should be "PersistentVolumeClaim" for now
+        peId = astrolabe.NewProtectedEntityIDWithNamespace(cloneFromSnapshot.Spec.Kind, pvc.Name, pvc.Namespace)
+        ctrl.logger.Infof("XY: cloneFromSnapshot: Generated PE ID: %s", peId.String())
+        ivdPeId := astrolabe.NewProtectedEntityIDWithNamespace("ivd", "placeholder", "")
+        ctrl.logger.Infof("XY: cloneFromSnapshot: Generated IVD PE ID: %s", ivdPeId.String())
+	var fcdId string
+	if metav1.HasAnnotation(pvc.ObjectMeta, annPVtoBackingDiskObjectId) {
+		annBacking := pvc.Annotations[annPVtoBackingDiskObjectId]
+		backingObjs := strings.Split(annBacking, "|")
+		if len(backingObjs) != 3 {
+			return errors.New("Failed to get BackingDiskPath")
+		}
+		backingDiskPathFull := backingObjs[2]
+		backingDiskPath := backingDiskPathFull
+		// time="2024-09-06T21:06:36Z" level=info msg="XY: cloneFromSnapshot: calling RegisterDisk with PE ID: pvc:test-ns/test-pvc, backingDiskPath: [vsanDatastore] 680bbd66-781a-731c-725c-0050568b0d69/4292e47c9bf04b37996127ce00329c1a.vmdk" controller=BackupDriverController logSource="/go/src/github.com/vmware-tanzu/velero-plugin-for-vsphere/pkg/backupdriver/backup_driver_controller.go:333"
+		// TODO: retrieve child PE ID from PE ID pvc:test-ns/test-pvc
+		//pvcPE, err = this.pem.GetProtectedEntity(ctx, peID)
+		//ivdPE, err := ctrl.snapManager.Pem.GetProtectedEntity(ctx, ivdPeId)
+                //if err != nil {
+                //        errorMsg := fmt.Sprintf("XY: Failed to get the IVD ProtectedEntity from peID %s. Error: %v", ivdPeId.String(), err)
+                //        ctrl.logger.Errorf(errorMsg)
+                //        return errors.New(errorMsg)
+                //}
+
+                //components, err := pvcPE.GetComponents(ctx)
+		ctrl.logger.Infof("XY: cloneFromSnapshot: calling RegisterDisk with PE ID: %s, backingDiskPath: %s", ivdPeId, backingDiskPath)
+		fcdId, err = ctrl.snapManager.RegisterDisk(ivdPeId, backingDiskPath, "test_replication")
+        	if err != nil {
+                	errMsg := fmt.Sprintf("cloneFromSnapshot: Failed at calling SnapshotManager RegisterDisk with peId %s, backingDiskPath %s,, err: %+v", peId, backingDiskPath, err)
+                	cloneFromSnapshotStatusFields["Message"] = errMsg
+                	_, statusUpdateErr := ctrl.updateCloneFromSnapshotStatusPhase(ctx, cloneFromSnapshot.Namespace, cloneFromSnapshot.Name,
+                        	backupdriverapi.ClonePhaseFailed, cloneFromSnapshotStatusFields)
+                	if statusUpdateErr != nil {
+                        	ctrl.logger.Error("Failed to update the CloneFromSnapshot Status to Failed state.")
+                	}
+                	return err
+		}
+		ctrl.logger.Infof("XY: here!!! FCD ID is %s for PVC %s/%s", fcdId, pvc.Namespace, pvc.Name)	
+	} else {
+		// Temp code for testing
+		fcdId = "190cd241-8012-4730-9d62-cbe689889c69"
+		ctrl.logger.Infof("XY: Temporarily setting FCD ID to %s for PVC %s/%s for testing without backing up the PVC with annotations", fcdId, pvc.Namespace, pvc.Name)
+		// return errors.New("Failed to get PVC annotation for BackingDiskPath")
+	}
+
+	// Xing: Call snapManager.CreateVolumeFromSnapshotWithMetadata which calls pvcPE.CreateFromMetadata.
+	// It creates PV with fcdId and creates a PVC to bind with it
+
+	// cloneFromSnapshot.Spec.Kind should be "PersistentVolumeClaim" for now
+	//peId := astrolabe.NewProtectedEntityIDWithNamespace(cloneFromSnapshot.Spec.Kind, pvc.Name, pvc.Namespace)
+	ctrl.logger.Infof("XY: cloneFromSnapshot: Calling snapManager.CreateVolumeFromSnapshotWithMetadata with PE ID: %s, fcdId: %s", peId.String(), fcdId)
+
+	returnPeId, err := ctrl.snapManager.CreateVolumeFromSnapshotWithMetadata(peId, cloneFromSnapshot.Spec.Metadata,
+		cloneFromSnapshot.Spec.SnapshotID, cloneFromSnapshot.Spec.BackupRepository, cloneFromSnapshot.Namespace, cloneFromSnapshot.Name, fcdId)
 	if err != nil {
 		errMsg := fmt.Sprintf("cloneFromSnapshot: Failed at calling SnapshotManager CreateVolumeFromSnapshotWithMetadata with peId %s, err: %+v", peId, err)
 		cloneFromSnapshotStatusFields["Message"] = errMsg
@@ -321,10 +383,11 @@ func (ctrl *backupDriverController) cloneFromSnapshot(cloneFromSnapshot *backupd
 		return err
 	}
 
-	returnVolumeID = returnPeId.GetID()
-	returnVolumeType = returnPeId.GetPeType()
+	returnVolumeID := returnPeId.GetID()
+	returnVolumeType := returnPeId.GetPeType()
 
-	ctrl.logger.Infof("A new volume %s with type being %s was just created from the call of SnapshotManager CreateVolumeFromSnapshotWithMetadata", returnVolumeID, returnVolumeType)
+	ctrl.logger.Infof("XY: A new volume %s with type being %s was just created from the call of SnapshotManager CreateVolumeFromSnapshotWithMetadata", returnVolumeID, returnVolumeType)
+
 	return nil
 }
 
